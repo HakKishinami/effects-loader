@@ -80,6 +80,30 @@ bool Search::HasFileWithExtensionRecursively(const char *folderpath, const char 
     return false;
 }
 
+// Single-directory (non-recursive) check with exact extension compare - the building
+// block used by ForAllFilesPairedRecursively to test whether a folder holds a .fxs.
+bool Search::ContainsFileWithExtension(const char *folderpath, const char *extension) {
+    if (!folderpath || !folderpath[0])
+        return false;
+    char search_path[MAX_PATH];
+    snprintf(search_path, sizeof(search_path), "%s\\*.*", folderpath);
+    WIN32_FIND_DATA fd;
+    HANDLE hFind = FindFirstFile(search_path, &fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.cFileName[0] != '.') {
+                const char *dot = strrchr(fd.cFileName, '.');
+                if (dot && !_stricmp(dot + 1, extension)) {
+                    FindClose(hFind);
+                    return true;
+                }
+            }
+        } while (FindNextFile(hFind, &fd));
+        FindClose(hFind);
+    }
+    return false;
+}
+
 bool Search::GetFirstFile(char *outPath, const char *folderpath, const char *extension) {
     if (!folderpath || !folderpath[0])
         return false;
@@ -90,6 +114,11 @@ bool Search::GetFirstFile(char *outPath, const char *folderpath, const char *ext
     if (hFind != INVALID_HANDLE_VALUE) {
         do {
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.cFileName[0] != '.') {
+                // FindFirstFile patterns match longer extensions too ("*.fxs" also hits
+                // "name.fxsav"), so confirm the real extension before reporting.
+                const char *dot = strrchr(fd.cFileName, '.');
+                if (!dot || _stricmp(dot + 1, extension))
+                    continue;
                 if (outPath) {
                     strncpy(outPath, fd.cFileName, MAX_PATH - 1);
                     outPath[MAX_PATH - 1] = '\0';
@@ -129,6 +158,10 @@ void Search::ForAllFiles(const char *folderpath, const char *extension, void(*ca
     if (hFind != INVALID_HANDLE_VALUE) {
         do {
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.cFileName[0] != '.') {
+                // Same FindFirstFile looseness as GetFirstFile - verify the extension.
+                const char *dot = strrchr(fd.cFileName, '.');
+                if (!dot || _stricmp(dot + 1, extension))
+                    continue;
                 char path[MAX_PATH];
                 snprintf(path, sizeof(path), "%s\\%s", folderpath, fd.cFileName);
                 callback(path, data);
@@ -161,6 +194,29 @@ void Search::ForAllFilesRecursively(const char *folderpath, const char *extensio
                 if (dot && !_stricmp(dot + 1, extension)) {
                     callback(fullPath, data);
                 }
+            }
+        } while (FindNextFile(hFind, &fd));
+        FindClose(hFind);
+    }
+}
+
+void Search::ForAllFilesPairedRecursively(const char *folderpath, const char *extension, const char *pairedExtension, void(*callback)(const char *, void *), void *data) {
+    if (!folderpath || !folderpath[0])
+        return;
+    // This directory's files only count when a paired file lives right next to them.
+    if (ContainsFileWithExtension(folderpath, pairedExtension))
+        ForAllFiles(folderpath, extension, callback, data);
+    // Subdirectories are always visited - pairing is decided per directory.
+    char search_path[MAX_PATH];
+    snprintf(search_path, sizeof(search_path), "%s\\*.*", folderpath);
+    WIN32_FIND_DATA fd;
+    HANDLE hFind = FindFirstFile(search_path, &fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.cFileName[0] != '.') {
+                char subPath[MAX_PATH];
+                snprintf(subPath, sizeof(subPath), "%s\\%s", folderpath, fd.cFileName);
+                ForAllFilesPairedRecursively(subPath, extension, pairedExtension, callback, data);
             }
         } while (FindNextFile(hFind, &fd));
         FindClose(hFind);

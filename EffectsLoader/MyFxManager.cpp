@@ -22,61 +22,53 @@ std::string MyFxManager::GetGameDirectory() {
     return std::string(exePath);
 }
 
-std::vector<std::string> MyFxManager::CollectEffectFolders() {
-    std::vector<std::string> list;
+std::vector<MyFxManager::EffectFolder> MyFxManager::CollectEffectFolders() {
+    std::vector<EffectFolder> list;
     std::string gameDir = GetGameDirectory();
-
-    LogFile::WriteFormattedLine("Game Directory: \"%s\"", gameDir.c_str());
 
     // 1. Scan ModLoader directory if it exists
     std::string modloaderDir = gameDir + "\\modloader";
     if (Search::DirectoryExists(modloaderDir.c_str())) {
-        LogFile::WriteFormattedLine("Scanning ModLoader: \"%s\"", modloaderDir.c_str());
         Search::ForAllFolders(modloaderDir.c_str(), [](const char *folderName, void *data) {
-            auto pList = reinterpret_cast<std::vector<std::string>*>(data);
+            auto pList = reinterpret_cast<std::vector<EffectFolder>*>(data);
             if (!folderName || folderName[0] == '.')
                 return;
 
             std::string gameDir = GetGameDirectory();
             char modRoot[MAX_PATH];
-            sprintf(modRoot, "%s\\modloader\\%s", gameDir.c_str(), folderName);
+            snprintf(modRoot, sizeof(modRoot), "%s\\modloader\\%s", gameDir.c_str(), folderName);
 
             char pathModelsEffects[MAX_PATH];
-            sprintf(pathModelsEffects, "%s\\models\\effects", modRoot);
+            snprintf(pathModelsEffects, sizeof(pathModelsEffects), "%s\\models\\effects", modRoot);
 
             char pathEffects[MAX_PATH];
-            sprintf(pathEffects, "%s\\effects", modRoot);
+            snprintf(pathEffects, sizeof(pathEffects), "%s\\effects", modRoot);
 
             bool found = false;
             // Pattern 1: modloader/<mod>/models/effects
             if (Search::DirectoryExists(pathModelsEffects) && Search::HasAnyEffectFilesRecursively(pathModelsEffects)) {
-                LogFile::WriteFormattedLine("Found effects in: \"%s\"", pathModelsEffects);
-                pList->push_back(pathModelsEffects);
+                pList->push_back({ pathModelsEffects, "modloader/<mod>/models/effects", false });
                 found = true;
             }
             // Pattern 2: modloader/<mod>/effects
             if (!found && Search::DirectoryExists(pathEffects) && Search::HasAnyEffectFilesRecursively(pathEffects)) {
-                LogFile::WriteFormattedLine("Found effects in: \"%s\"", pathEffects);
-                pList->push_back(pathEffects);
+                pList->push_back({ pathEffects, "modloader/<mod>/effects", false });
                 found = true;
             }
             // Pattern 3: modloader/<mod>/ ONLY if it contains actual .fxs particle files
             // (Prevents scanning unrelated vehicle paintjobs or HUD sprites as effects!)
+            // Textures in such a loose layout are only taken from directories that also
+            // hold a .fxs (pairedTextures), never from unrelated corners of the mod.
             if (!found && Search::HasFileWithExtensionRecursively(modRoot, "fxs")) {
-                LogFile::WriteFormattedLine("Found .fxs effects in Mod root: \"%s\"", modRoot);
-                pList->push_back(modRoot);
+                pList->push_back({ modRoot, "modloader/<mod> recursive .fxs", true });
             }
         }, &list);
-    } else {
-        LogFile::WriteLine("ModLoader directory not found.");
     }
 
     // 2. Scan root directory fallback (models\effects)
     std::string rootEffects = gameDir + "\\models\\effects";
-    if (Search::DirectoryExists(rootEffects.c_str()) && Search::HasAnyEffectFilesRecursively(rootEffects.c_str())) {
-        LogFile::WriteFormattedLine("Found effects in root: \"%s\"", rootEffects.c_str());
-        list.push_back(rootEffects);
-    }
+    if (Search::DirectoryExists(rootEffects.c_str()) && Search::HasAnyEffectFilesRecursively(rootEffects.c_str()))
+        list.push_back({ rootEffects, "models/effects", false });
 
     return list;
 }
@@ -229,7 +221,7 @@ bool MyFxManager::LoadProject(char *fxFileName) {
     // 3. Otherwise, write effects-loader.log in game root without creating extra folders
     std::string logFilePath;
     if (!effectFolders.empty()) {
-        logFilePath = effectFolders[0] + "\\log.txt";
+        logFilePath = effectFolders[0].path + "\\log.txt";
     } else if (Search::DirectoryExists((gameDir + "\\models\\effects").c_str())) {
         logFilePath = gameDir + "\\models\\effects\\log.txt";
     } else {
@@ -249,15 +241,29 @@ bool MyFxManager::LoadProject(char *fxFileName) {
     LogFile::WriteFormattedLine("Log File: \"%s\"", logFilePath.c_str());
     LogFile::WriteFormattedLine("Game Directory: \"%s\"", gameDir.c_str());
 
+    // Discovery happened silently before the log existed - echo the results now.
+    if (Search::DirectoryExists((gameDir + "\\modloader").c_str()))
+        LogFile::WriteFormattedLine("Scanning ModLoader: \"%s\\modloader\"", gameDir.c_str());
+    else
+        LogFile::WriteLine("ModLoader directory not found.");
     LogFile::WriteFormattedLine("Discovered %zu effect source folder(s):", effectFolders.size());
-    for (const auto &folder : effectFolders) {
-        LogFile::WriteFormattedLine(" - %s", folder.c_str());
-    }
+    for (const auto &folder : effectFolders)
+        LogFile::WriteFormattedLine(" - %s  [%s]", folder.path.c_str(), folder.matchedBy);
 
-    // 1. Load textures (DDS and PNG) from all discovered effect paths recursively
+    // 1. Load textures (DDS and PNG) from all discovered effect paths.
+    //    Pattern-3 ("loose layout") folders only take textures that sit next to a .fxs;
+    //    dedicated effect folders keep the plain recursive sweep (also covers packs that
+    //    retexture stock systems without shipping any .fxs).
+    void *txd = CTxdStore::ms_pTxdPool->GetAt(this->m_nFxTxdIndex);
     for (const auto &folder : effectFolders) {
-        Search::ForAllFilesRecursively(folder.c_str(), "dds", LoadDDSTextureCB, CTxdStore::ms_pTxdPool->GetAt(this->m_nFxTxdIndex));
-        Search::ForAllFilesRecursively(folder.c_str(), "png", LoadPNGTextureCB, CTxdStore::ms_pTxdPool->GetAt(this->m_nFxTxdIndex));
+        if (folder.pairedTextures) {
+            Search::ForAllFilesPairedRecursively(folder.path.c_str(), "dds", "fxs", LoadDDSTextureCB, txd);
+            Search::ForAllFilesPairedRecursively(folder.path.c_str(), "png", "fxs", LoadPNGTextureCB, txd);
+        }
+        else {
+            Search::ForAllFilesRecursively(folder.path.c_str(), "dds", LoadDDSTextureCB, txd);
+            Search::ForAllFilesRecursively(folder.path.c_str(), "png", LoadPNGTextureCB, txd);
+        }
     }
 
     CTxdStore::AddRef(this->m_nFxTxdIndex);
@@ -266,7 +272,7 @@ bool MyFxManager::LoadProject(char *fxFileName) {
 
     // 2. Load custom fx system files (.fxs) from all discovered effect paths recursively
     for (const auto &folder : effectFolders) {
-        Search::ForAllFilesRecursively(folder.c_str(), "fxs", LoadFxSystemFileCB, this);
+        Search::ForAllFilesRecursively(folder.path.c_str(), "fxs", LoadFxSystemFileCB, this);
     }
 
     // 3. Load default effects from effects.fxp

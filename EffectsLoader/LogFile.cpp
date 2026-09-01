@@ -25,7 +25,7 @@ void LogFile::Open(const char *customPath) {
     if (lastSlash) *lastSlash = '\0';
 
     char fallbackPath[MAX_PATH];
-    sprintf(fallbackPath, "%s\\effects-loader.log", exePath);
+    snprintf(fallbackPath, sizeof(fallbackPath), "%s\\effects-loader.log", exePath);
     m_pFile = fopen(fallbackPath, "wt");
 }
 

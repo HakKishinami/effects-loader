@@ -11,7 +11,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{587CC9B2-F2CA-4B22-AA29-C615A91100F}</ProjectGuid>
+    <ProjectGuid>{587CC9B2-F2CA-4B22-AA29-C1615A91100F}</ProjectGuid>
     <IgnoreWarnCompileDuplicatedFilename>true</IgnoreWarnCompileDuplicatedFilename>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>EffectsLoader</RootNamespace>
@@ -83,11 +83,6 @@
       <AdditionalDependencies>Plugin.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
-    <PostBuildEvent>
-      <Command>if defined GTA_SA_DIR (
-xcopy /Y "$(TargetPath)" "$(GTA_SA_DIR)\scripts\"
-)</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -109,11 +104,6 @@ xcopy /Y "$(TargetPath)" "$(GTA_SA_DIR)\scripts\"
       <AdditionalDependencies>Plugin_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(PLUGIN_SDK_DIR)\output\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
-    <PostBuildEvent>
-      <Command>if defined GTA_SA_DIR (
-xcopy /Y "$(TargetPath)" "$(GTA_SA_DIR)\scripts\"
-)</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="EffectsLoader.cpp" />
