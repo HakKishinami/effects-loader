@@ -4,11 +4,17 @@
     <ClInclude Include="MyFxManager.h" />
     <ClInclude Include="Search.h" />
     <ClInclude Include="LogFile.h" />
+    <ClInclude Include="DdsCache.h" />
+    <ClInclude Include="stb_dxt.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="EffectsLoader.cpp" />
     <ClCompile Include="Search.cpp" />
     <ClCompile Include="LogFile.cpp" />
     <ClCompile Include="MyFxManager.cpp" />
+    <ClCompile Include="DdsCache.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="effects-loader.ini" />
   </ItemGroup>
 </Project>

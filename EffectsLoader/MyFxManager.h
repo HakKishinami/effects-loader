@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <unordered_set>
 #include "game_sa\FxManager_c.h"
 
 /*  FXP - FX Project
@@ -8,9 +9,29 @@
     Load custom effects (fxs files from modloader/ or models/effects/) > Load effects.fxp file (ignore effect if it was already loaded as custom) */
 
 class MyFxManager : public FxManager_c {
-    static std::vector<unsigned int> customParticlesKeys;
-    static std::vector<std::string> customTexturesNames;
+    // Dedup sets (O(1) lookup). Texture keys are stored LOWERCASED - the same
+    // rule the old linear _stricmp scan enforced. Game-facing uses (dictionary
+    // names, cache file names, log lines) keep the ORIGINAL case untouched:
+    // .fxs files reference mixed-case names like "Spark1"/"sphere_CJ".
+    static std::unordered_set<unsigned int> customParticlesKeys;
+    static std::unordered_set<std::string> customTexturesNames;
     static char tempSystemName[256];
+
+    // ---- Experimental DDS cache (v1, see DdsCache.h) ----
+    static std::string ddsCacheDir;   // "<gameDir>\models\effects\cache", "" = disabled
+    static bool ddsCacheReady;
+    // Session counters for the end-of-load summary block in the log.
+    static int statPngSeen;
+    static int statCacheHit;
+    static int statCacheMiss;
+    static int statCacheWriteOk;
+    static int statCacheWriteSkip;
+    static int statCacheWriteFail;
+    static int statDdsHitFallbackToPng; // cache .dds failed to load -> PNG fallback
+    static unsigned long long statPngBytes;
+    static unsigned long long statDdsBytes;
+    static unsigned long long statPngMs;
+    static unsigned long long statDdsMs;
 
     // Retrieves absolute game root directory from executable path
     static std::string GetGameDirectory();
@@ -34,6 +55,10 @@ class MyFxManager : public FxManager_c {
 
     // Checks if a texture name has already been registered
     static bool TextureAlreadyLoaded(const char *name);
+
+    // True when "path" lives inside the DDS cache dir (V1.1: the cache must
+    // never be scanned as an effect source - it only holds generated .dds).
+    static bool IsInCacheDir(const char *path);
 
     // Callbacks for texture loading
     static void LoadPNGTextureCB(const char *path, void *dictionary);

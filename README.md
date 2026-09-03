@@ -13,4 +13,5 @@ Makes it possible to:
 ## Credits
 
 * **[DK22Pac](https://github.com/DK22Pac)** - Original author of EffectsLoader
-* **[plugin-sdk](https://github.com/DK22Pac/plugin-sdk)** - Plugin SDK for Grand Theft Auto 3D engine
+* **[plugin-sdk](https://github.com/DK22Pac/plugin-sdk)** - Plugin SDK for Grand Theft Auto 3D engine (zlib/libpng license)
+* **[stb_dxt.h](https://github.com/nothings/stb)** by Fabian "ryg" Giesen, ported by Sean Barrett - DXT1/DXT5 compressor (MIT or Public Domain, your choice)
