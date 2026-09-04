@@ -7,6 +7,8 @@ Makes it possible to:
 * Add new effects, without effects.fxp/effectsPC.txd editing
 * Replace default effects, without effects.fxp/effectsPC.txd editing
 * ModLoader compatibility
+* DDS Cache and DXT Compression
+* Configurable Fx Memory Pool
 
 ![Img1](http://i.imgur.com/e4fiMf6.png)
 
