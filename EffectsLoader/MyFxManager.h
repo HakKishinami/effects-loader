@@ -33,9 +33,6 @@ class MyFxManager : public FxManager_c {
     static unsigned long long statPngMs;
     static unsigned long long statDdsMs;
 
-    // Retrieves absolute game root directory from executable path
-    static std::string GetGameDirectory();
-
     // One discovered custom-effect source folder plus the layout rule that found it
     // ("modloader/<mod>/models/effects", "modloader/<mod>/effects",
     //  "modloader/<mod> recursive .fxs" or "models/effects"), for the log.
@@ -69,6 +66,15 @@ class MyFxManager : public FxManager_c {
     static bool IsThisParticleLoaded(unsigned int key);
     static void LoadFxSystemFileCB(const char *path, void *data);
 public:
+    // Configured capacity for FxMemoryPool_c (in MB)
+    static unsigned int configuredPoolSizeMB;
+
+    // Retrieves absolute game root directory from executable path
+    static std::string GetGameDirectory();
+
+    // Retrieves directory where our own .asi module is located
+    static std::string GetOwnModuleDir();
+
     // Hooks FxManager_c::LoadProject (0x5C2420)
     bool LoadProject(char *fxFileName);
 };

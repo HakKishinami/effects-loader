@@ -26,6 +26,9 @@ unsigned long long MyFxManager::statDdsBytes = 0;
 unsigned long long MyFxManager::statPngMs = 0;
 unsigned long long MyFxManager::statDdsMs = 0;
 
+// Configured capacity for FxMemoryPool_c blueprint definition pool (default 16MB)
+unsigned int MyFxManager::configuredPoolSizeMB = 16;
+
 // ---- V2-eng cache config (effects-loader.ini next to our own .asi) ----
 // [Cache] Enabled=1 Fidelity=balanced|lossless|fast MipsNPOT=0 MaxDim=0
 static int g_cfgCacheOn = 1;
@@ -34,11 +37,11 @@ static int g_cfgMipsNPOT = 0;
 static int g_cfgMaxDim = 0;
 static std::string g_cfgCacheDir; // empty = default (<game>\effects-loader-cache)
 
-static std::string GetOwnModuleDir() {
+std::string MyFxManager::GetOwnModuleDir() {
     HMODULE hm = NULL;
     GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                       (LPCSTR)&GetOwnModuleDir, &hm);
+                       (LPCSTR)&MyFxManager::GetOwnModuleDir, &hm);
     char p[MAX_PATH] = { 0 };
     if (hm)
         GetModuleFileNameA(hm, p, MAX_PATH);
@@ -53,10 +56,12 @@ static void LoadCacheConfig() {
     g_cfgMipsNPOT = 0;
     g_cfgMaxDim = 0;
     g_cfgCacheDir.clear();
-    std::string dir = GetOwnModuleDir();
-    if (dir.empty())
-        return;
-    std::string ini = dir + "\\effects-loader.ini";
+    std::string dir = MyFxManager::GetOwnModuleDir();
+    std::string ini = dir.empty() ? "effects-loader.ini" : (dir + "\\effects-loader.ini");
+    if (GetFileAttributesA(ini.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::string gameDir = MyFxManager::GetGameDirectory();
+        ini = gameDir + "\\effects-loader.ini";
+    }
     g_cfgCacheOn = GetPrivateProfileIntA("Cache", "Enabled", 1, ini.c_str());
     char fid[32] = { 0 };
     GetPrivateProfileStringA("Cache", "Fidelity", "balanced", fid, sizeof(fid), ini.c_str());
@@ -90,6 +95,9 @@ static std::string ResolveCacheDir(const std::string &gameDir) {
             return c;
         return gameDir + "\\" + c;
     }
+    std::string mlDir = gameDir + "\\modloader";
+    if (Search::DirectoryExists(mlDir.c_str()))
+        return mlDir + "\\.effects-cache";
     return gameDir + "\\effects-loader-cache";
 }
 
@@ -443,15 +451,22 @@ void MyFxManager::LoadFxSystemFileCB(const char *path, void *data) {
     char linebuf[256];
     int file = CFileMgr::OpenFile(const_cast<char*>(path), "r");
     if (file != 0) {
-        CFileMgr::ReadLine(file, linebuf, 256);
-        char *pHeader = linebuf;
-        // Skip UTF-8 BOM if present
-        if ((unsigned char)pHeader[0] == 0xEF && (unsigned char)pHeader[1] == 0xBB && (unsigned char)pHeader[2] == 0xBF) {
-            pHeader += 3;
+        char *pHeader = nullptr;
+        // Skip leading blank lines / whitespace until the first non-empty line
+        while (CFileMgr::ReadLine(file, linebuf, 256)) {
+            char *p = linebuf;
+            // Skip UTF-8 BOM if present
+            if ((unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) {
+                p += 3;
+            }
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p != '\r' && *p != '\n' && *p != '\0') {
+                pHeader = p;
+                break;
+            }
         }
-        while (*pHeader == ' ' || *pHeader == '\t') pHeader++;
 
-        if (!strncmp(pHeader, "FX_SYSTEM_DATA:", 15)) {
+        if (pHeader && !strncmp(pHeader, "FX_SYSTEM_DATA:", 15)) {
             unsigned int key = GetSystemNameKey(file);
             if (!IsThisParticleLoaded(key)) {
                 customParticlesKeys.insert(key);
@@ -463,7 +478,7 @@ void MyFxManager::LoadFxSystemFileCB(const char *path, void *data) {
             }
         }
         else {
-            LogFile::WriteFormattedLine("Skipping \"%s\" - header is not FX_SYSTEM_DATA: (found: \"%s\")", path, pHeader);
+            LogFile::WriteFormattedLine("Skipping \"%s\" - header is not FX_SYSTEM_DATA: (found: \"%s\")", path, pHeader ? pHeader : "<empty file>");
         }
         CFileMgr::CloseFile(file);
     }
@@ -501,6 +516,9 @@ bool MyFxManager::LoadProject(char *fxFileName) {
     LogFile::WriteLine("EffectsLoader - Initializing custom effects");
     LogFile::WriteFormattedLine("Log File: \"%s\"", logFilePath.c_str());
     LogFile::WriteFormattedLine("Game Directory: \"%s\"", gameDir.c_str());
+    // Log FxMemoryPool expansion info
+    LogFile::WriteFormattedLine("FxMemoryPool: %u MB (%u bytes) [Original: 1 MB, configured via effects-loader.ini]",
+        configuredPoolSizeMB, configuredPoolSizeMB * 1024 * 1024);
 
     // ---- Experimental DDS cache setup ----
     statPngSeen = statCacheHit = statCacheMiss = 0;
@@ -565,43 +583,48 @@ bool MyFxManager::LoadProject(char *fxFileName) {
                         cacheVer, DdsCache::CACHE_VERSION, wiped);
                 }
             }
-            // One-time migration from the v1 location (models\effects\cache).
-            std::string oldCache = gameDir + "\\models\\effects\\cache";
-            if (_stricmp(oldCache.c_str(), ddsCacheDir.c_str()) != 0 &&
-                Search::DirectoryExists(oldCache.c_str())) {
-                char findPat[MAX_PATH];
-                snprintf(findPat, sizeof(findPat), "%s\\*.dds", oldCache.c_str());
-                WIN32_FIND_DATAA fd;
-                HANDLE hFind = FindFirstFileA(findPat, &fd);
-                int moved = 0, droppedDup = 0, failed = 0;
-                if (hFind != INVALID_HANDLE_VALUE) {
-                    do {
-                        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.')
-                            continue;
-                        char src[MAX_PATH], dst[MAX_PATH];
-                        if (!DdsCache::JoinPath(src, sizeof(src), oldCache.c_str(), fd.cFileName) ||
-                            !DdsCache::JoinPath(dst, sizeof(dst), ddsCacheDir.c_str(), fd.cFileName)) {
-                            failed++; // path too long - never touch a truncated path
-                            continue;
-                        }
-                        if (GetFileAttributesA(dst) == INVALID_FILE_ATTRIBUTES) {
-                            if (MoveFileA(src, dst))
-                                moved++;
-                            else {
-                                failed++;
-                                LogFile::WriteFormattedLine("DDS-CACHE MIGRATE FAILED \"%s\" (err=%lu)", src, GetLastError());
+            // One-time migration from legacy locations (models\effects\cache, effects-loader-cache).
+            std::vector<std::string> oldLocations = {
+                gameDir + "\\models\\effects\\cache",
+                gameDir + "\\effects-loader-cache"
+            };
+            for (const auto &oldCache : oldLocations) {
+                if (_stricmp(oldCache.c_str(), ddsCacheDir.c_str()) != 0 &&
+                    Search::DirectoryExists(oldCache.c_str())) {
+                    char findPat[MAX_PATH];
+                    snprintf(findPat, sizeof(findPat), "%s\\*.dds", oldCache.c_str());
+                    WIN32_FIND_DATAA fd;
+                    HANDLE hFind = FindFirstFileA(findPat, &fd);
+                    int moved = 0, droppedDup = 0, failed = 0;
+                    if (hFind != INVALID_HANDLE_VALUE) {
+                        do {
+                            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == '.')
+                                continue;
+                            char src[MAX_PATH], dst[MAX_PATH];
+                            if (!DdsCache::JoinPath(src, sizeof(src), oldCache.c_str(), fd.cFileName) ||
+                                !DdsCache::JoinPath(dst, sizeof(dst), ddsCacheDir.c_str(), fd.cFileName)) {
+                                failed++; // path too long - never touch a truncated path
+                                continue;
                             }
-                        } else if (DeleteFileA(src)) {
-                            droppedDup++; // new location already has it
-                        } else {
-                            failed++;
-                        }
-                    } while (FindNextFileA(hFind, &fd));
-                    FindClose(hFind);
+                            if (GetFileAttributesA(dst) == INVALID_FILE_ATTRIBUTES) {
+                                if (MoveFileA(src, dst))
+                                    moved++;
+                                else {
+                                    failed++;
+                                    LogFile::WriteFormattedLine("DDS-CACHE MIGRATE FAILED \"%s\" (err=%lu)", src, GetLastError());
+                                }
+                            } else if (DeleteFileA(src)) {
+                                droppedDup++; // new location already has it
+                            } else {
+                                failed++;
+                            }
+                        } while (FindNextFileA(hFind, &fd));
+                        FindClose(hFind);
+                    }
+                    RemoveDirectoryA(oldCache.c_str()); // succeeds only when empty
+                    LogFile::WriteFormattedLine("DDS-CACHE MIGRATE old=\"%s\" moved=%d dropped-dup=%d failed=%d",
+                        oldCache.c_str(), moved, droppedDup, failed);
                 }
-                RemoveDirectoryA(oldCache.c_str()); // succeeds only when empty
-                LogFile::WriteFormattedLine("DDS-CACHE MIGRATE old=\"%s\" moved=%d dropped-dup=%d failed=%d",
-                    oldCache.c_str(), moved, droppedDup, failed);
             }
         } else {
             LogFile::WriteFormattedLine("DDS-CACHE DISABLED for this session - cannot create dir=\"%s\"", ddsCacheDir.c_str());
