@@ -36,13 +36,17 @@ class MyFxManager : public FxManager_c {
     // One discovered custom-effect source folder plus the layout rule that found it
     // ("modloader/<mod>/models/effects", "modloader/<mod>/effects",
     //  "modloader/<mod> recursive .fxs" or "models/effects"), for the log.
-    // "pairedTextures": loose Pattern-3 folders only take textures from directories
-    // that also contain a .fxs, so unrelated images elsewhere in the mod stay untouched.
+    // "filterByFxsWhitelist": loose Pattern-3 folders only take textures that are
+    // explicitly declared by this mod's .fxs files (allowedTextures), so unrelated
+    // images elsewhere in the mod (vehicle paintjobs, radar icons) stay untouched,
+    // while textures in separate subdirectories (e.g. textures/) are properly loaded.
     struct EffectFolder {
         std::string path;
         const char *matchedBy;
-        bool pairedTextures;
+        bool filterByFxsWhitelist;
+        std::unordered_set<std::string> allowedTextures;
     };
+    static const EffectFolder *currentLoadingFolder;
 
     // Scans ModLoader and game root for all valid custom effect source directories.
     // Stays silent on purpose: it runs BEFORE LogFile::Open (the log location depends

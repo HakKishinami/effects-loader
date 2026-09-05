@@ -20,8 +20,8 @@ static const bool ENABLED = true;
 // Bump this whenever the on-disk cache format changes incompatibly -
 // LoadProject wipes all *.dds once when the stored version mismatches,
 // so broken/old files can never linger (e.g. V2 DXT with non-4-aligned
-// dims that the game rejects).
-static const int CACHE_VERSION = 2;
+// dims that the game rejects; V3 introduces alpha-weighted mipmaps).
+static const int CACHE_VERSION = 3;
 
 // Max texture name length respected by RW (see LoadPNGTextureCB texName[31]).
 static const size_t MAX_TEX_NAME = 31;

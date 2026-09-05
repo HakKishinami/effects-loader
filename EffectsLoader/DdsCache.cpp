@@ -192,7 +192,15 @@ bool StripExtension(const char *path, char *outPath, size_t outSize) {
     strncpy(outPath, path, outSize - 1);
     outPath[outSize - 1] = '\0';
     char *dot = strrchr(outPath, '.');
-    char *slash = strrchr(outPath, '\\');
+    char *slash1 = strrchr(outPath, '\\');
+    char *slash2 = strrchr(outPath, '/');
+    char *slash = nullptr;
+    if (slash1 && slash2)
+        slash = (slash1 > slash2) ? slash1 : slash2;
+    else if (slash1)
+        slash = slash1;
+    else
+        slash = slash2;
     if (!dot || (slash && dot < slash))
         return false;
     *dot = '\0';
@@ -369,6 +377,9 @@ DecideResult DecideFormat(const unsigned char *rgba, int width, int height,
 
 void BoxDownscale(const unsigned char *src, int srcW, int srcH,
                   unsigned char *out, int outW, int outH) {
+    if (!src || !out || srcW <= 0 || srcH <= 0 || outW <= 0 || outH <= 0)
+        return;
+
     for (int y = 0; y < outH; y++) {
         int sy0 = y * srcH / outH;
         int sy1 = (y + 1) * srcH / outH;
@@ -379,23 +390,49 @@ void BoxDownscale(const unsigned char *src, int srcW, int srcH,
             int sx1 = (x + 1) * srcW / outW;
             if (sx1 <= sx0)
                 sx1 = sx0 + 1;
-            unsigned sum[4] = { 0, 0, 0, 0 };
+
+            uint64_t sumR = 0, sumG = 0, sumB = 0;
+            uint64_t sumA = 0;
+            uint64_t unweightedR = 0, unweightedG = 0, unweightedB = 0;
             int n = 0;
+
             for (int sy = sy0; sy < sy1; sy++) {
                 for (int sx = sx0; sx < sx1; sx++) {
                     const unsigned char *p = src + ((size_t)sy * srcW + sx) * 4;
-                    sum[0] += p[0];
-                    sum[1] += p[1];
-                    sum[2] += p[2];
-                    sum[3] += p[3];
+                    unsigned char r = p[0];
+                    unsigned char g = p[1];
+                    unsigned char b = p[2];
+                    unsigned char a = p[3];
+
+                    sumR += (uint64_t)r * a;
+                    sumG += (uint64_t)g * a;
+                    sumB += (uint64_t)b * a;
+                    sumA += a;
+
+                    unweightedR += r;
+                    unweightedG += g;
+                    unweightedB += b;
                     n++;
                 }
             }
+
             unsigned char *d = out + ((size_t)y * outW + x) * 4;
-            d[0] = (unsigned char)(sum[0] / n);
-            d[1] = (unsigned char)(sum[1] / n);
-            d[2] = (unsigned char)(sum[2] / n);
-            d[3] = (unsigned char)(sum[3] / n);
+            if (n > 0) {
+                if (sumA > 0) {
+                    // Alpha-weighted RGB to eliminate black borders around transparent sprites
+                    d[0] = (unsigned char)((sumR + (sumA / 2)) / sumA);
+                    d[1] = (unsigned char)((sumG + (sumA / 2)) / sumA);
+                    d[2] = (unsigned char)((sumB + (sumA / 2)) / sumA);
+                } else {
+                    // All source pixels are 100% transparent; fallback to unweighted average
+                    d[0] = (unsigned char)((unweightedR + (n / 2)) / n);
+                    d[1] = (unsigned char)((unweightedG + (n / 2)) / n);
+                    d[2] = (unsigned char)((unweightedB + (n / 2)) / n);
+                }
+                d[3] = (unsigned char)((sumA + (n / 2)) / n);
+            } else {
+                d[0] = d[1] = d[2] = d[3] = 0;
+            }
         }
     }
 }
